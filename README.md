@@ -1,5 +1,4 @@
-# econ1500finalproj
-Alan Xiong and Andrew Zhong's ECON 1500 Final Project
+# Alan Xiong and Andrew Zhong's ECON 1500 Final Project
 
 This final project is a interactive dashboard visualizing international trade from 1988-2021, in order to provide insights into the following questions: 
 
