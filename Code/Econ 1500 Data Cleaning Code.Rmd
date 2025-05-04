@@ -1,0 +1,497 @@
+---
+title: "Econ 1500 Data Cleaning Code"
+author: "Andrew Zhong"
+date: "2025-04-26"
+output: html_document
+---
+
+```{r setup, echo = TRUE, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+
+library(tidyverse)
+library(foreign)
+library(tableone)    ## for descriptive statistics and analysis
+library(RCurl)       ## if reading in data from a website
+library(broom)       ## format glm/lm output
+library(gridExtra)   ## arranging grids of graphs
+library(GGally)      ## pairwise scatterplots
+library(kableExtra)  ## manipulate table styles
+library(Metrics)     ## for auc, rmse, and other evaluation metrics
+library(lmtest)      ## likelihood ratio test
+library(caret)       ## confusion matrix
+library(glmtoolbox)  ## goodness-of-fit test
+library(predtools)   ## calibration plot
+library(pROC)        ## ROC and AUC
+library(car)         ## regression tools
+library(haven)       ## work with data stored in other statistical formats (like SAS)
+library(lubridate)   ## handling date/time objects
+library(ggcorrplot)  ## correlation plots
+library(readxl)      ## to read in excel files
+library(MASS)        ## for examples from book
+library(car)         ## functions and tools for regression analysis
+library(WeightIt)    ## for weighting methods in causal estimation
+library(MatchIt)     ## for matching methods 
+library(cobalt)      ## covariate balance tables and plots 
+library(survey)      ## for using survey design weights in statistical models
+library(lme4)        ## linear mixed-effects models
+library(tinytex)
+library(gofcat)
+library(glmnet)
+library(gtsummary)
+library(knitr)
+library(gt)
+library(lme4)
+library(AER)
+library(estimatr)
+library(coin)
+library(randomForest)
+library(haven)
+library(rdd)
+library(rdrobust)
+library(ipumsr)
+library(readr)
+library(writexl)
+library(fixest)
+library(sf)
+library(tigris)
+```
+
+## Page 1: Isolate 6 trade measures (exports, imports, trade balance, trade balance % of GDP, total trade, total trade % of GDP) for each country by year
+```{r}
+#Source: https://wits.worldbank.org/datadownload.aspx?lang=en
+
+#Establish countries: 193 UN member states + Taiwan, excludes observer states of Vatican and Palestine, and excludes Kosovo b/c it doesn't have data
+country_codes <- c(
+  "AFG", "ALB", "DZA", "AND", "AGO", "ATG", "ARG", "ARM", "AUS", "AUT",
+  "AZE", "BHR", "BGD", "BRB", "BLR", "BEL", "BLZ", "BEN", "BTN", "BOL",
+  "BIH", "BWA", "BRA", "BRN", "BGR", "BFA", "BDI", "KHM", "CMR", "CAN",
+  "CPV", "CAF", "TCD", "CHL", "CHN", "COL", "COM", "CRI", "HRV", "CUB",
+  "CYP", "CZE", "COD", "DNK", "DJI", "DMA", "DOM", "TLS", "ECU", "EGY",
+  "SLV", "GNQ", "ERI", "EST", "SWZ", "ETH", "FJI", "FIN", "FRA", "GAB",
+  "GEO", "DEU", "GHA", "GRC", "GRD", "GTM", "GIN", "GNB", "GUY", "HTI",
+  "HND", "HUN", "ISL", "IND", "IDN", "IRN", "IRQ", "IRL", "ISR", "ITA",
+  "CIV", "JAM", "JPN", "JOR", "KAZ", "KEN", "KIR", "KWT", "KGZ", "LAO",
+  "LVA", "LBN", "LSO", "LBR", "LBY", "LIE", "LTU", "LUX", "MDG", "MWI",
+  "MYS", "MDV", "MLI", "MLT", "MHL", "MRT", "MUS", "MEX", "MDA", "MCO",
+  "MNG", "MNE", "MAR", "MOZ", "MMR", "NAM", "NRU", "NPL", "NLD", "NZL",
+  "NIC", "NER", "NGA", "PRK", "MKD", "NOR", "OMN", "PAK", "PLW", "PAN",
+  "PNG", "PRY", "PER", "PHL", "POL", "PRT", "QAT", "COG", "ROU", "RUS",
+  "RWA", "KNA", "LCA", "VCT", "WSM", "SMR", "SAU", "SEN", "SRB", "SYC",
+  "SLE", "SGP", "SVK", "SVN", "SLB", "SOM", "ZAF", "KOR", "SSD", "ESP",
+  "LKA", "SDN", "SUR", "SWE", "CHE", "SYR", "STP", "TJK", "TZA", "THA",
+  "BHS", "GMB", "TGO", "TON", "TTO", "TUN", "TKM", "TUV", "TUR", "UGA",
+  "UKR", "ARE", "GBR", "USA", "URY", "UZB", "VUT", "VEN", "VNM", "YEM",
+  "ZMB", "ZWE", "FSM", "TWN"
+)
+
+#Read and combine all files
+folder_path <- "C:\\Users\\azhon\\Desktop\\Econ 1500\\wits\\"
+
+p1_all_data <- do.call(rbind, lapply(country_codes, function(code) {
+  file_name <- paste0("en_", code, "_AllYears_WITS_Trade_Summary.csv")
+  file_path <- file.path(folder_path, file_name)
+  if (file.exists(file_path)) {
+    read.csv(file_path)
+  } else {
+    NULL
+  }
+}))
+
+#Isolate export/import data
+p1_expimp_data <- p1_all_data%>%
+  filter(Indicator %in% c("Export(US$ Mil)", "Exports (in US$ Mil)", "Import(US$ Mil)", "Imports (in US$ Mil)"))
+
+#Pivot year columns to long data and clean some value names (indicator type and year)
+year_columns <- paste0("X", 1988:2021)
+p1_expimp_data_long <- pivot_longer(p1_expimp_data, cols = year_columns, names_to = "Year", values_to = "Value")
+p1_expimp_data_long <- p1_expimp_data_long %>%
+  mutate(Value = if_else(Indicator %in% c("Export(US$ Mil)", "Exports (in US$ Mil)", "Import(US$ Mil)", "Imports (in US$ Mil)"), Value * 1e6, Value))%>%
+  mutate(Indicator = if_else(Indicator %in% c("Export(US$ Mil)", "Exports (in US$ Mil)"), "Export (current US$)", Indicator))%>%
+  mutate(Indicator = if_else(Indicator %in% c("Import(US$ Mil)", "Imports (in US$ Mil)"), "Import (current US$)", Indicator))%>%
+  mutate(Year = as.integer(sub("X", "", Year)))%>%
+  select(-c("Indicator.Type"))
+
+#Pivot indicator columns to wide data
+p1_expimp_data_wide <- pivot_wider(p1_expimp_data_long, names_from = Indicator, values_from = Value)
+
+
+
+#Isolate other available trade measures
+p1_trdmeas_data <- p1_all_data%>%
+  filter(Indicator %in% c("Trade Balance (current US$ Mil)", "Trade Balance (% of GDP)", "Trade (% of GDP)"))
+
+#Pivot year columns to long data and clean some value names (indicator type and year)
+p1_trdmeas_data_long <- pivot_longer(p1_trdmeas_data, cols = year_columns, names_to = "Year", values_to = "Value")
+p1_trdmeas_data_long <- p1_trdmeas_data_long %>%
+  mutate(Value = if_else(Indicator == "Trade Balance (current US$ Mil)", Value * 1e6, Value))%>%
+  mutate(Indicator = if_else(Indicator == "Trade Balance (current US$ Mil)", "Trade Balance (current US$)", Indicator))%>%
+  mutate(Year = as.integer(sub("X", "", Year)))%>%
+  select(-c("Indicator.Type", "Partner", "Product.categories"))
+
+#Pivot indicator columns to wide data
+p1_trdmeas_data_wide <- pivot_wider(p1_trdmeas_data_long, names_from = Indicator, values_from = Value)
+
+#Combine other trade measures with export/import data, calculate remaining trade measure, rename
+p1_relevant_data <- left_join(p1_expimp_data_wide, p1_trdmeas_data_wide, by = c("Reporter", "Year"))
+p1_relevant_data <- p1_relevant_data%>%
+  mutate(`Total Trade (current US$)` = if_else(is.na(`Export (current US$)`) | is.na(`Import (current US$)`), NA,
+    `Export (current US$)` + `Import (current US$)`
+  ))%>%
+  rename(`Country` = Reporter, Product = Product.categories)%>%
+  select(-c(Partner))
+
+
+
+#Clean data: standardizing to country codes
+p1_codes <- c(
+  "AFG", "ALB", "DZA", "AND", "AGO", "ATG",
+  "ARG", "ARM", "AUS", "AUT", "AZE", "BHR",
+  "BGD", "BRB", "BLR", "BEL", "BLZ", "BEN",
+  "BTN", "BOL", "BIH", "BWA", "BRA", "BRN",
+  "BGR", "BFA", "BDI", "KHM", "CMR", "CAN",
+  "CPV", "CAF", "TCD", "CHL", "CHN", "COL",
+  "COM", "CRI", "HRV", "CUB", "CYP", "CZE",
+  "DNK", "DJI", "DMA", "DOM", "ECU", "EGY",
+  "SLV", "ERI", "EST", "SWZ", "ETH", "FJI",
+  "FIN", "FRA", "GAB", "GEO", "DEU", "GHA",
+  "GRC", "GRD", "GTM", "GIN", "GNB", "GUY",
+  "HND", "HUN", "ISL", "IND", "IDN", "IRN",
+  "IRQ", "IRL", "ISR", "ITA", "CIV", "JAM",
+  "JPN", "JOR", "KAZ", "KEN", "KIR", "KWT",
+  "KGZ", "LVA", "LBN", "LSO", "LBY", "LTU",
+  "LUX", "MDG", "MWI", "MYS", "MDV", "MLI",
+  "MLT", "MRT", "MUS", "MEX", "MDA", "MNG",
+  "MAR", "MOZ", "MMR", "NAM", "NPL", "NLD",
+  "NZL", "NIC", "NER", "NGA", "MKD", "NOR",
+  "OMN", "PAK", "PLW", "PAN", "PNG", "PRY",
+  "PER", "PHL", "POL", "PRT", "QAT", "COG",
+  "RUS", "RWA", "KNA", "LCA", "VCT", "WSM",
+  "SAU", "SEN", "SYC", "SLE", "SGP", "SVK",
+  "SVN", "SLB", "ZAF", "KOR", "ESP", "LKA",
+  "SSD", "SUR", "SWE", "CHE", "SYR", "STP",
+  "TJK", "TZA", "THA", "BHS", "GMB", "TGO",
+  "TON", "TTO", "TUN", "TKM", "TUV", "TUR",
+  "UGA", "UKR", "ARE", "GBR", "USA", "URY",
+  "VUT", "VEN", "VNM", "YEM", "ZMB", "ZWE",
+  "FSM"
+)
+
+p1_code_crosswalk <- data.frame(
+  Country = unique(p1_relevant_data$Country),
+  Code = p1_codes,
+  stringsAsFactors = FALSE
+)
+
+p1_relevant_data <- left_join(p1_relevant_data, p1_code_crosswalk, by = "Country")
+p1_relevant_data <- p1_relevant_data%>%select(Country, Code, everything())
+```
+
+## Page 2: Combine trade data with macroeconomic variables
+```{r}
+#Get GDP data
+#Source: https://ourworldindata.org/grapher/gdp-worldbank-constant-usd
+p2_gdp_data <- read.csv("C:\\Users\\azhon\\Desktop\\Econ 1500\\gdp_data.csv")%>%
+  filter(Year >= 1988 & Year <= 2021)%>%
+  select(-c("Entity"))
+colnames(p2_gdp_data) <- c("Code", "Year", "GDP")
+
+
+#Get GDP per capita data
+#Source: https://ourworldindata.org/grapher/gdp-per-capita-worldbank
+p2_gdp_per_capita_data <- read.csv("C:\\Users\\azhon\\Desktop\\Econ 1500\\gdp_per_capita_data.csv")%>%
+  filter(Year >= 1988 & Year <= 2021)%>%
+  select(-c("Entity"))
+colnames(p2_gdp_per_capita_data) <- c("Code", "Year", "GDP Per Capita")
+
+
+#Get productivity data
+#Source: https://ourworldindata.org/grapher/labor-productivity-per-hour-pennworldtable?time=1960
+p2_productivity_data <- read.csv("C:\\Users\\azhon\\Desktop\\Econ 1500\\productivity_data.csv")%>%
+  filter(Year >= 1988 & Year <= 2021)%>%
+  select(-c("Entity"))
+colnames(p2_productivity_data) <- c("Code", "Year", "Productivity")
+
+
+#Get unemployment rate data
+#Source: https://ourworldindata.org/grapher/unemployment-rate
+p2_unemployment_rate_data <- read.csv("C:\\Users\\azhon\\Desktop\\Econ 1500\\unemployment_rate_data.csv")%>%
+  filter(Year >= 1988 & Year <= 2021)%>%
+  select(-c("Entity"))
+colnames(p2_unemployment_rate_data) <- c("Code", "Year", "Unemployment Rate")
+
+
+#Get inflation rate data
+#Source: https://ourworldindata.org/grapher/inflation-of-consumer-prices
+p2_inflation_rate_data <- read.csv("C:\\Users\\azhon\\Desktop\\Econ 1500\\inflation_rate_data.csv")%>%
+  filter(Year >= 1988 & Year <= 2021)%>%
+  select(-c("Entity"))
+colnames(p2_inflation_rate_data) <- c("Code", "Year", "Inflation Rate")
+
+
+#Add macrovariable columns to trade data
+p2_p1_trade_var_df <- left_join(p1_relevant_data, p2_gdp_data, by = c("Code", "Year"))
+p2_p1_trade_var_df <- left_join(p2_p1_trade_var_df, p2_gdp_per_capita_data, by = c("Code", "Year"))
+p2_p1_trade_var_df <- left_join(p2_p1_trade_var_df, p2_productivity_data, by = c("Code", "Year"))
+p2_p1_trade_var_df <- left_join(p2_p1_trade_var_df, p2_unemployment_rate_data, by = c("Code", "Year"))
+p2_p1_trade_var_df <- left_join(p2_p1_trade_var_df, p2_inflation_rate_data, by = c("Code", "Year"))
+
+p2_p1_trade_var_df <- p2_p1_trade_var_df%>%filter(Product == "All Products")%>%select(-c("Product", "Export (current US$)", "Import (current US$)"))
+```
+
+## Page 3: Gravity model verification
+```{r}
+#Source: https://data.imf.org/en/Data-Explorer
+
+#Get export data
+p3_bilateral_export <- read.csv("C:\\Users\\azhon\\Desktop\\Econ 1500\\bilateral_export_data.csv")
+
+p3_not_countries <- c(
+  "Netherlands Antilles",
+  "West Bank and Gaza",
+  "Holy See",
+  "European Union (EU)",
+  "Emerging and Developing Europe",
+  "Emerging and Developing Asia",
+  "Latin America and the Caribbean (LAC)",
+  "Middle East",
+  "CIS",
+  "Africa",
+  "Euro Area (EA)",
+  "Sub-Saharan Africa (SSA)",
+  "Union of Soviet Socialist Republics (USSR)",
+  "German Democratic Republic",
+  "Czechoslovakia",
+  "Yugoslavia, Socialist Federal Republic of",
+  "Belgium-Luxembourg",
+  "Yemen Arab Republic",
+  "South African Common Customs Area (SACCA)",
+  "Other Countries n.i.e.",
+  "Advanced Economies",
+  "Emerging Market and Developing Economies (EMDE)",
+  "Middle East and Central Asia",
+  "World",
+  "EMDEs by Source of Export Earnings: Fuel",
+  "EMDEs by Source of Export Earnings: Nonfuel",
+  "Middle East, North Africa, Afghanistan, and Pakistan",
+  "Anguilla, United Kingdom-British Overseas Territory",
+  "Curaçao, Kingdom of the Netherlands",
+  "Sint Maarten, Kingdom of the Netherlands",
+  "Hong Kong Special Administrative Region, People's Republic of China",
+  "Aruba, Kingdom of the Netherlands",
+  "Montserrat, United Kingdom-British Overseas Territory",
+  "Falkland Islands (Malvinas)",
+  "Macao Special Administrative Region, People's Republic of China",
+  "New Caledonia",
+  "Europe",
+  "American Samoa",
+  "Guam",
+  "Greenland",
+  "Bermuda",
+  "French Polynesia",
+  "Gibraltar",
+  "Faroe Islands",
+  "Serbia and Montenegro"
+)
+
+p3_bilateral_export <- p3_bilateral_export%>%
+  filter(!COUNTRY %in% p3_not_countries)%>%
+  select(COUNTRY, COUNTERPART_COUNTRY, paste0("X", 1988:2021))
+
+p3_not_counterpart_countries <- c(
+  "Western Hemisphere not specified",
+  "Asia not specified",
+  "Hong Kong Special Administrative Region, People's Republic of China",
+  "Africa not specified",
+  "Africa",
+  "Advanced Economies",
+  "Middle East",
+  "Falkland Islands (Malvinas)",
+  "CIS",
+  "Macao Special Administrative Region, People's Republic of China",
+  "Taiwan Province of China",
+  "Europe not specified",
+  "Aruba, Kingdom of the Netherlands",
+  "Emerging and Developing Asia",
+  "Faroe Islands",
+  "Emerging Market and Developing Economies (EMDE)",
+  "European Union (EU)",
+  "EMDEs by Source of Export Earnings: Fuel",
+  "Netherlands Antilles",
+  "World",
+  "Latin America and the Caribbean (LAC)",
+  "Europe",
+  "Other Countries n.i.e.",
+  "Middle East, North Africa, Afghanistan, and Pakistan",
+  "Special Categories",
+  "EMDEs by Source of Export Earnings: Nonfuel",
+  "West Bank and Gaza",
+  "Countries & Areas not specified",
+  "French Polynesia",
+  "American Samoa",
+  "Holy See",
+  "Middle East and Central Asia not specified",
+  "Yugoslavia, Socialist Federal Republic of",
+  "Belgium-Luxembourg",
+  "Czechoslovakia",
+  "Union of Soviet Socialist Republics (USSR)",
+  "German Democratic Republic",
+  "Yemen, People's Democratic Republic of",
+  "Yemen Arab Republic",
+  "South African Common Customs Area (SACCA)",
+  "Middle East and Central Asia",
+  "Greenland",
+  "Guam",
+  "Emerging and Developing Europe",
+  "Euro Area (EA)",
+  "Sub-Saharan Africa (SSA)",
+  "Sint Maarten, Kingdom of the Netherlands",
+  "Curacao, Kingdom of the Netherlands",
+  "Montserrat, United Kingdom-British Overseas Territory",
+  "Anguilla, United Kingdom-British Overseas Territory",
+  "Bermuda",
+  "New Caledonia"
+)
+
+p3_bilateral_export <- p3_bilateral_export%>%
+  filter(!COUNTERPART_COUNTRY %in% p3_not_counterpart_countries)%>%
+  rename(Country = COUNTRY, PartnerCountry = COUNTERPART_COUNTRY)
+
+
+#Clean data: standardizing to country codes
+country_codes_imf <- c(
+    "GEO", "SYC", "MLI", "DZA", "COD", 
+    "YEM", "MYS", "DNK", "XKX", "KGZ", 
+    "ERI", "SWE", "FJI", "LBR", "ESP", "ZAF", 
+    "DOM", "CAN", "PLW", "POL", 
+    "SMR", "MDA", "SEN", "GHA", "TCD", "JAM", 
+    "SAU", "GNB", "GIN", "THA", "UZB", "MDV", 
+    "DJI", "AUS", "IRN", "CRI", 
+    "LAO", "SLV", "MWI", "NRU", 
+    "GNQ", "LBN", "ISL", "TZA", 
+    "MHL", "EST", "IDN", 
+    "FSM", "GRD", "KNA", "PAK", 
+    "ETH", "USA", "GBR", "WSM", 
+    "SLE", "AGO", "EGY", "TUV", "ARG", "ITA", 
+    "AZE", "LCA", "ECU", "MUS", "BTN", "VNM", 
+    "KHM", "UKR", "SUR", "HRV", 
+    "PRK", "PHL", "MNG", "MAR", "NOR", "ROU", 
+    "CYP", "HTI", "HND", "BWA", 
+    "COL", "SSD", "VUT", "BLZ", "RWA", 
+    "MDG", "TLS", "RUS", "SLB", 
+    "ARE", "PRT", "TKM", "PAN", 
+    "AFG", "GMB", "SOM", "TUR", 
+    "IRQ", "VEN", "MRT", "BGR", 
+    "MEX", "LSO", "CIV", "MKD", "BDI", 
+    "STP", "FIN", "PER", "BRB", "BOL", 
+    "JPN", "MMR", "GAB", "KEN", 
+    "GTM", "BGD", "TUN", "FRA", "UGA", 
+    "NAM", "JOR", "NER", "COG", "CZE", "MLT", 
+    "SWZ", "IND", "KOR", "ALB", "VCT", 
+    "LVA", "TTO", "MNE", "SDN", "CHL", 
+    "COM", "BLR", "LTU", "LBY", "BRA", 
+    "DEU", "BFA", "BRN", "SVK", "MOZ", 
+    "BEN", "CUB", "CAF", "IRL", "HUN", 
+    "CPV", "BEL", "ZMB", "GRC", "NPL", 
+    "SVN", "LKA", "ISR", "LUX", "PRY", 
+    "BIH", "ZWE", "NGA", "NZL", "KWT", 
+    "BHR", "SRB", "URY", "CHE", "KAZ", 
+    "NLD", "PNG", "ATG", "BHS", "DMA", 
+    "OMN", "QAT", "TON", "AUT", "CHN", 
+    "CMR", "GUY", "TJK", "SYR", "YMD", 
+    "KIR", "NIC", "ARM", "TGO", "SGP"
+  )
+
+p3_code_crosswalk <- data.frame(
+  Country = unique(p3_bilateral_export$Country),
+  Code = country_codes_imf,
+  stringsAsFactors = FALSE
+)
+p3_code_crosswalk_partner <- data.frame(
+  PartnerCountry = unique(p3_bilateral_export$Country),
+  PartnerCode = country_codes_imf,
+  stringsAsFactors = FALSE
+)
+
+p3_bilateral_export <- left_join(p3_bilateral_export, p3_code_crosswalk, by = "Country")
+p3_bilateral_export <- left_join(p3_bilateral_export, p3_code_crosswalk_partner, by = "PartnerCountry")
+p3_bilateral_export <- p3_bilateral_export%>%
+  select(Country, Code, PartnerCountry, PartnerCode, everything())%>%
+  select(-c(Country, PartnerCountry))
+
+
+#Get gravity model explanatory variables data
+#Source: https://www.cepii.fr/CEPII/en/bdd_modele/bdd_modele_item.asp?id=6
+p3_gmod_var <- read_excel("C:\\Users\\azhon\\Desktop\\Econ 1500\\gravity_mod_controls.xls")%>%
+  filter(iso_o %in% p1_codes & iso_d %in% p1_codes)%>%
+  select(-c("distw", "distwces"))%>%
+  rename(Code = iso_o, PartnerCode = iso_d)
+
+
+#Combine LHS and RHS of gravity model
+p3_gmod_complete <- left_join(p3_bilateral_export, p3_gmod_var, by = c("Code", "PartnerCode"))
+p3_gmod_complete_long <- pivot_longer(p3_gmod_complete, cols = year_columns, names_to = "Year", values_to = "Export (US$)")
+p3_gmod_complete_long <- p3_gmod_complete_long%>%
+  mutate(Year = as.integer(sub("X", "", Year)))%>%
+  mutate(`Export (US$)` = `Export (US$)` * 1e6)
+```
+
+## Download data
+```{r}
+official_country_names <- c(
+  "Afghanistan", "Albania", "Algeria", "Andorra", "Angola", "Antigua and Barbuda", "Argentina", "Armenia", "Australia", "Austria",
+  "Azerbaijan", "Bahrain", "Bangladesh", "Barbados", "Belarus", "Belgium", "Belize", "Benin", "Bhutan", "Bolivia",
+  "Bosnia and Herzegovina", "Botswana", "Brazil", "Brunei", "Bulgaria", "Burkina Faso", "Burundi", "Cambodia", "Cameroon", "Canada",
+  "Cape Verde", "Central African Republic", "Chad", "Chile", "China", "Colombia", "Comoros", "Costa Rica", "Croatia", "Cuba",
+  "Cyprus", "Czech Republic", "Democratic Republic of the Congo", "Denmark", "Djibouti", "Dominica", "Dominican Republic", "Timor-Leste", "Ecuador", "Egypt",
+  "El Salvador", "Equatorial Guinea", "Eritrea", "Estonia", "Eswatini", "Ethiopia", "Fiji", "Finland", "France", "Gabon",
+  "Georgia", "Germany", "Ghana", "Greece", "Grenada", "Guatemala", "Guinea", "Guinea-Bissau", "Guyana", "Haiti",
+  "Honduras", "Hungary", "Iceland", "India", "Indonesia", "Iran", "Iraq", "Ireland", "Israel", "Italy",
+  "Ivory Coast", "Jamaica", "Japan", "Jordan", "Kazakhstan", "Kenya", "Kiribati", "Kuwait", "Kyrgyzstan", "Laos",
+  "Latvia", "Lebanon", "Lesotho", "Liberia", "Libya", "Liechtenstein", "Lithuania", "Luxembourg", "Madagascar", "Malawi",
+  "Malaysia", "Maldives", "Mali", "Malta", "Marshall Islands", "Mauritania", "Mauritius", "Mexico", "Moldova", "Monaco",
+  "Mongolia", "Montenegro", "Morocco", "Mozambique", "Myanmar", "Namibia", "Nauru", "Nepal", "Netherlands", "New Zealand",
+  "Nicaragua", "Niger", "Nigeria", "North Korea", "North Macedonia", "Norway", "Oman", "Pakistan", "Palau", "Panama",
+  "Papua New Guinea", "Paraguay", "Peru", "Philippines", "Poland", "Portugal", "Qatar", "Republic of the Congo", "Romania", "Russia",
+  "Rwanda", "Saint Kitts and Nevis", "Saint Lucia", "Saint Vincent and the Grenadines", "Samoa", "San Marino", "Saudi Arabia", "Senegal", "Serbia", "Seychelles",
+  "Sierra Leone", "Singapore", "Slovakia", "Slovenia", "Solomon Islands", "Somalia", "South Africa", "South Korea", "South Sudan", "Spain",
+  "Sri Lanka", "Sudan", "Suriname", "Sweden", "Switzerland", "Syria", "Sao Tome and Principe", "Tajikistan", "Tanzania", "Thailand",
+  "Bahamas", "Gambia", "Togo", "Tonga", "Trinidad and Tobago", "Tunisia", "Turkmenistan", "Tuvalu", "Turkey", "Uganda",
+  "Ukraine", "United Arab Emirates", "United Kingdom", "United States", "Uruguay", "Uzbekistan", "Vanuatu", "Venezuela", "Vietnam", "Yemen",
+  "Zambia", "Zimbabwe", "Federated States of Micronesia", "Taiwan"
+)
+
+official_crosswalk <- data.frame(
+  Country = official_country_names,
+  Code = country_codes,
+  stringsAsFactors = FALSE
+)
+
+#P1
+p1_relevant_data <- p1_relevant_data%>%
+  select(-c(Country))
+p1_relevant_data <- left_join(p1_relevant_data, official_crosswalk, by = "Code")
+p1_relevant_data <- p1_relevant_data%>%
+  select(Country, Code, everything())
+write.csv(p1_relevant_data, "C:\\Users\\azhon\\Desktop\\Econ 1500\\p1_relevant_data.csv", row.names=FALSE)
+
+#P2
+p2_p1_trade_var_df <- p2_p1_trade_var_df%>%
+  select(-c(Country))
+p2_p1_trade_var_df <- left_join(p2_p1_trade_var_df, official_crosswalk, by = "Code")
+p2_p1_trade_var_df <- p2_p1_trade_var_df%>%
+  select(Country, Code, everything())
+write.csv(p2_p1_trade_var_df, "C:\\Users\\azhon\\Desktop\\Econ 1500\\p2_p1_trade_var_df.csv", row.names=FALSE)
+
+
+#P3
+official_crosswalk_partner <- data.frame(
+  PartnerCountry = official_country_names,
+  PartnerCode = country_codes,
+  stringsAsFactors = FALSE
+)
+p3_gmod_complete_long <- left_join(p3_gmod_complete_long, official_crosswalk, by = "Code")
+p3_gmod_complete_long <- left_join(p3_gmod_complete_long, official_crosswalk_partner, by = "PartnerCode")
+p3_gmod_complete_long <- p3_gmod_complete_long%>%
+  select(Country, Code, PartnerCountry, PartnerCode, everything())
+write.csv(p3_gmod_complete_long, "C:\\Users\\azhon\\Desktop\\Econ 1500\\p3_gmod_complete_long.csv", row.names=FALSE)
+```
